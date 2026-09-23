@@ -8,21 +8,24 @@ schema: 2.0.0
 # Move-HuduArticleCompany
 
 ## SYNOPSIS
-Move a Knowledge Base Article to a different company
+Move a Knowledge Base Article to a different company or the central Knowledge Base
 
 ## SYNTAX
 
 ```
-Move-HuduArticleCompany [[-HuduBaseURL] <String>] [-ArticleId] <Int32> [-CompanyId] <Int32>
+Move-HuduArticleCompany [[-HuduBaseURL] <String>] [-ArticleId] <Int32> [-CompanyId] <Nullable`1>
  [[-FolderId] <Nullable`1>] [-ProgressAction <ActionPreference>] [-WhatIf] [-Confirm] [<CommonParameters>]
 ```
 
 ## DESCRIPTION
-Uses Hudu API to update an article's company_id via PUT /api/v1/articles/{id}
+Uses Hudu API to update an article's company_id via PUT /api/v1/articles/{id}.
+
+Pass a company id to move the article onto that company's Knowledge Base.
+Pass $null for -CompanyId to move the article into the central (global) Knowledge Base.
 
 When FolderId is omitted, the article is moved to the root of the destination
-company's Knowledge Base. A supplied FolderId must belong to the destination
-company.
+Knowledge Base (company or central). A supplied FolderId must belong to the same
+destination as CompanyId.
 
 ## EXAMPLES
 
@@ -33,10 +36,15 @@ Move-HuduArticleCompany -ArticleId 1 -CompanyId 20
 
 ### EXAMPLE 2
 ```
-Move-HuduArticleCompany -HuduBaseURL https://demo.huducloud.com -ArticleId 1 -CompanyId 20
+Move-HuduArticleCompany -ArticleId 1 -CompanyId $null
 ```
 
 ### EXAMPLE 3
+```
+Move-HuduArticleCompany -HuduBaseURL https://demo.huducloud.com -ArticleId 1 -CompanyId 20
+```
+
+### EXAMPLE 4
 ```
 Move-HuduArticleCompany -ArticleId 1 -CompanyId 20 -FolderId 5
 ```
@@ -75,23 +83,27 @@ Accept wildcard characters: False
 ```
 
 ### -CompanyId
-Destination company id
+Destination company id, or $null to move the article into the central Knowledge Base.
+
+Must be passed explicitly. Use ``-CompanyId $null`` for the central Knowledge Base.
+The parameter is a nullable int and allows null.
 
 ```yaml
-Type: Int32
+Type: Nullable`1
 Parameter Sets: (All)
 Aliases: company_id
 
 Required: True
 Position: 3
-Default value: 0
+Default value: None
 Accept pipeline input: False
 Accept wildcard characters: False
 ```
 
 ### -FolderId
-Optional destination-company folder id.
-When omitted, the article is moved to the root of the destination company's Knowledge Base.
+Optional destination folder id.
+When omitted or passed as $null, the article is moved to the root of the destination Knowledge Base (company or central).
+When a folder id is supplied, the folder must belong to the same destination as CompanyId.
 
 ```yaml
 Type: Nullable`1

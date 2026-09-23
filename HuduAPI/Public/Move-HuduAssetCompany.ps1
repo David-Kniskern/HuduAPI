@@ -53,11 +53,28 @@ function Move-HuduAssetCompany {
         throw "A valid asset could not be found to move, please double check the ID and try again"
     }
 
-    $CurrentCompanyId = $Object.company_id
+    if ($null -eq $Object.company_id -or [int]$Object.company_id -lt 1) {
+        throw "Asset $AssetId does not have a valid current company_id, so it cannot be moved."
+    }
+
+    $CurrentCompanyId = [int]$Object.company_id
     $Asset = [ordered]@{asset = [ordered]@{company_id = $CompanyId } }
     $JSON = $Asset | ConvertTo-Json -Depth 10
 
     if ($PSCmdlet.ShouldProcess("ID: $AssetId Name: $($Object.name)", "Move Asset from company $CurrentCompanyId to $CompanyId")) {
-        Invoke-HuduRequest -Method put -Resource "/api/v1/companies/$CurrentCompanyId/assets/$AssetId" -Body $JSON
+        $Result = Invoke-HuduRequest -Method put -Resource "/api/v1/companies/$CurrentCompanyId/assets/$AssetId" -Body $JSON
+
+        # Invoke-HuduRequest returns $null after a failed retry, so verify the
+        # persisted state instead of silently reporting a successful move.
+        $MovedAsset = Get-HuduAssets -Id $AssetId | Select-Object -First 1
+        if (-not $MovedAsset -or [int]$MovedAsset.company_id -ne $CompanyId) {
+            throw "Asset $AssetId did not move to company $CompanyId."
+        }
+
+        if ($null -ne $Result) {
+            $Result
+        } else {
+            $MovedAsset
+        }
     }
 }

@@ -41,6 +41,12 @@ Describe 'Move-Hudu*Company command surface' {
         $Aliases = $Command.Parameters.Values | ForEach-Object { $_.Aliases }
         @($Aliases | Where-Object { $_ -in $Command.Parameters.Keys }) | Should -BeNullOrEmpty
     }
+
+    It 'declares Move-HuduArticleCompany -CompanyId as a nullable int' {
+        $Parameter = (Get-Command -Module HuduAPI -Name Move-HuduArticleCompany).Parameters['CompanyId']
+        $Parameter.ParameterType.Name | Should -Be 'Nullable`1'
+        $Parameter.ParameterType.GenericTypeArguments[0].FullName | Should -Be 'System.Int32'
+    }
 }
 
 Describe 'Move-HuduArticleCompany' {
@@ -77,7 +83,7 @@ Describe 'Move-HuduArticleCompany' {
         }
     }
 
-    It 'rejects an id below 1' {
+    It 'rejects an article id below 1 and a company id of 0' {
         { Move-HuduArticleCompany -ArticleId 0 -CompanyId 7 -WhatIf } | Should -Throw
         { Move-HuduArticleCompany -ArticleId 42 -CompanyId 0 -WhatIf } | Should -Throw
     }
@@ -87,6 +93,61 @@ Describe 'Move-HuduArticleCompany' {
 
         Should -Invoke -CommandName Invoke-HuduRequest -ModuleName HuduAPI -Times 0 -Exactly
         Should -Invoke -CommandName Get-HuduArticles -ModuleName HuduAPI -Times 0 -Exactly
+    }
+}
+
+Describe 'Move-HuduArticleCompany to the central Knowledge Base' {
+
+    BeforeAll {
+        Mock -CommandName Invoke-HuduRequest -ModuleName HuduAPI -MockWith { }
+        Mock -CommandName Get-HuduArticles -ModuleName HuduAPI -MockWith {
+            [pscustomobject]@{
+                article = [pscustomobject]@{
+                    id         = 42
+                    company_id = $null
+                    folder_id  = $null
+                }
+            }
+        }
+    }
+
+    It 'PUTs company_id as null when moving to central' {
+        Move-HuduArticleCompany -ArticleId 42 -CompanyId $null -Confirm:$false
+
+        Should -Invoke -CommandName Invoke-HuduRequest -ModuleName HuduAPI -Times 1 -Exactly -ParameterFilter {
+            $Method -eq 'put' -and
+            $Resource -eq '/api/v1/articles/42' -and
+            $null -eq ($Body | ConvertFrom-Json).article.company_id -and
+            $null -eq ($Body | ConvertFrom-Json).article.folder_id
+        }
+    }
+
+    It 'accepts an explicit null CompanyId without parameter binding errors' {
+        { Move-HuduArticleCompany -ArticleId 42 -CompanyId $null -WhatIf } | Should -Not -Throw
+    }
+}
+
+Describe 'Move-HuduArticleCompany from the central Knowledge Base to a company' {
+
+    BeforeAll {
+        Mock -CommandName Invoke-HuduRequest -ModuleName HuduAPI -MockWith { }
+        Mock -CommandName Get-HuduArticles -ModuleName HuduAPI -MockWith {
+            [pscustomobject]@{
+                article = [pscustomobject]@{
+                    id         = 42
+                    company_id = 7
+                    folder_id  = $null
+                }
+            }
+        }
+    }
+
+    It 'PUTs a destination company id when leaving central' {
+        Move-HuduArticleCompany -ArticleId 42 -CompanyId 7 -Confirm:$false
+
+        Should -Invoke -CommandName Invoke-HuduRequest -ModuleName HuduAPI -Times 1 -Exactly -ParameterFilter {
+            ($Body | ConvertFrom-Json).article.company_id -eq 7
+        }
     }
 }
 
@@ -125,6 +186,53 @@ Describe 'Move-HuduArticleCompany with a destination folder' {
         { Move-HuduArticleCompany -ArticleId 42 -CompanyId 7 -folder_id 9 -WhatIf } |
             Should -Not -Throw
     }
+
+    It 'accepts an explicit null FolderId as a folder clear' {
+        Mock -CommandName Get-HuduArticles -ModuleName HuduAPI -MockWith {
+            [pscustomobject]@{
+                article = [pscustomobject]@{
+                    id         = 42
+                    company_id = 7
+                    folder_id  = $null
+                }
+            }
+        }
+
+        Move-HuduArticleCompany -ArticleId 42 -CompanyId 7 -FolderId $null -Confirm:$false
+
+        Should -Invoke -CommandName Get-HuduFolders -ModuleName HuduAPI -Times 0 -Exactly
+        Should -Invoke -CommandName Invoke-HuduRequest -ModuleName HuduAPI -Times 1 -Exactly -ParameterFilter {
+            $null -eq ($Body | ConvertFrom-Json).article.folder_id
+        }
+    }
+}
+
+Describe 'Move-HuduArticleCompany with a central Knowledge Base folder' {
+
+    BeforeAll {
+        Mock -CommandName Invoke-HuduRequest -ModuleName HuduAPI -MockWith { }
+        Mock -CommandName Get-HuduFolders -ModuleName HuduAPI -MockWith {
+            [pscustomobject]@{ id = 11; company_id = $null }
+        }
+        Mock -CommandName Get-HuduArticles -ModuleName HuduAPI -MockWith {
+            [pscustomobject]@{
+                article = [pscustomobject]@{
+                    id         = 42
+                    company_id = $null
+                    folder_id  = 11
+                }
+            }
+        }
+    }
+
+    It 'accepts a central folder when CompanyId is null' {
+        Move-HuduArticleCompany -ArticleId 42 -CompanyId $null -FolderId 11 -Confirm:$false
+
+        Should -Invoke -CommandName Invoke-HuduRequest -ModuleName HuduAPI -Times 1 -Exactly -ParameterFilter {
+            $null -eq ($Body | ConvertFrom-Json).article.company_id -and
+            ($Body | ConvertFrom-Json).article.folder_id -eq 11
+        }
+    }
 }
 
 Describe 'Move-HuduArticleCompany with an invalid destination folder' {
@@ -139,6 +247,13 @@ Describe 'Move-HuduArticleCompany with an invalid destination folder' {
     It 'rejects a folder owned by another company before sending a PUT' {
         { Move-HuduArticleCompany -ArticleId 42 -CompanyId 7 -FolderId 9 -Confirm:$false } |
             Should -Throw '*does not belong to company 7*'
+
+        Should -Invoke -CommandName Invoke-HuduRequest -ModuleName HuduAPI -Times 0 -Exactly
+    }
+
+    It 'rejects a company folder when moving to the central Knowledge Base' {
+        { Move-HuduArticleCompany -ArticleId 42 -CompanyId $null -FolderId 9 -Confirm:$false } |
+            Should -Throw '*does not belong to the central Knowledge Base*'
 
         Should -Invoke -CommandName Invoke-HuduRequest -ModuleName HuduAPI -Times 0 -Exactly
     }
@@ -163,14 +278,28 @@ Describe 'Move-HuduArticleCompany when Hudu rejects the update' {
         { Move-HuduArticleCompany -ArticleId 42 -CompanyId 7 -Confirm:$false } |
             Should -Throw '*did not move to company 7*'
     }
+
+    It 'throws when a central move did not clear company_id' {
+        { Move-HuduArticleCompany -ArticleId 42 -CompanyId $null -Confirm:$false } |
+            Should -Throw '*did not move to the central Knowledge Base*'
+    }
 }
 
 Describe 'Move-HuduAssetCompany' {
 
+    BeforeEach {
+        $script:AssetLookupCount = 0
+    }
+
     BeforeAll {
         Mock -CommandName Invoke-HuduRequest -ModuleName HuduAPI -MockWith { }
         Mock -CommandName Get-HuduAssets -ModuleName HuduAPI -MockWith {
-            [pscustomobject]@{ id = 42; name = 'Test Asset'; company_id = 7 }
+            $script:AssetLookupCount++
+            if ($script:AssetLookupCount -eq 1) {
+                [pscustomobject]@{ id = 42; name = 'Test Asset'; company_id = 7 }
+            } else {
+                [pscustomobject]@{ id = 42; name = 'Test Asset'; company_id = 9 }
+            }
         }
     }
 
@@ -212,13 +341,22 @@ Describe 'Move-HuduAssetCompany' {
 
 Describe 'Move-HuduAssetCompany when the lookup returns a collection' {
 
+    BeforeEach {
+        $script:AssetLookupCount = 0
+    }
+
     BeforeAll {
         Mock -CommandName Invoke-HuduRequest -ModuleName HuduAPI -MockWith { }
         Mock -CommandName Get-HuduAssets -ModuleName HuduAPI -MockWith {
-            @(
-                [pscustomobject]@{ id = 42; name = 'Test Asset'; company_id = 7 }
-                [pscustomobject]@{ id = 43; name = 'Other Asset'; company_id = 8 }
-            )
+            $script:AssetLookupCount++
+            if ($script:AssetLookupCount -eq 1) {
+                @(
+                    [pscustomobject]@{ id = 42; name = 'Test Asset'; company_id = 7 }
+                    [pscustomobject]@{ id = 43; name = 'Other Asset'; company_id = 8 }
+                )
+            } else {
+                [pscustomobject]@{ id = 42; name = 'Test Asset'; company_id = 9 }
+            }
         }
     }
 
@@ -243,5 +381,20 @@ Describe 'Move-HuduAssetCompany when the asset does not exist' {
             Should -Throw '*could not be found*'
 
         Should -Invoke -CommandName Invoke-HuduRequest -ModuleName HuduAPI -Times 0 -Exactly
+    }
+}
+
+Describe 'Move-HuduAssetCompany when Hudu rejects the update' {
+
+    BeforeAll {
+        Mock -CommandName Invoke-HuduRequest -ModuleName HuduAPI -MockWith { $null }
+        Mock -CommandName Get-HuduAssets -ModuleName HuduAPI -MockWith {
+            [pscustomobject]@{ id = 42; name = 'Test Asset'; company_id = 7 }
+        }
+    }
+
+    It 'throws when the persisted asset did not move' {
+        { Move-HuduAssetCompany -AssetId 42 -CompanyId 9 -Confirm:$false } |
+            Should -Throw '*did not move to company 9*'
     }
 }
